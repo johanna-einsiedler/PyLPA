@@ -8,4 +8,7 @@ setup(name='py_lpa',
       author_email='johanna.einsiedler@sodas.ku.dk',
       license='MIT',
       packages=['py_lpa'],
+      install_requires=[
+          'numpy','scipy','tqdm'
+      ],
       zip_safe=False)

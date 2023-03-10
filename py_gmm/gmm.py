@@ -1,14 +1,11 @@
-import pandas as pd
-pd.options.display.float_format = '{:,.4f}'.format
 import numpy as np
-import sklearn.mixture as mix
-import scipy.stats as stats
-import seaborn as sns
-from scipy.stats import norm
-from time import sleep
+from scipy import stats
 from tqdm import tqdm
 from datetime import datetime
 import itertools
+from scipy.spatial import distance_matrix
+from scipy.optimize import linear_sum_assignment
+
 
 """
 Disclaimer: This code is based on the code for multivariate Gaussian Mixture Models provided here by 
@@ -42,11 +39,13 @@ class GaussianMixture(object):
     def __init__(self, K = 3):
         self.K = K
         self.means_ = None
+        self.means_std = None
         self.covariances_ = None
         self.pi_ = None
         self.log_likelihoods = None
         self.constraints = None
         self.run_time = 0
+        self.X=None
 
 
     def initialization(self, *X, D, K, G, mean_constraint=None):
@@ -445,7 +444,7 @@ class GaussianMixture(object):
                 sigma = self.mstep_sigma(X,W,W_s,mu,var_constraint=var_constraint, cov_constraint=cov_constraint)
                 pi = self.mstep_pi(X,W,W_s, pi_constraint=pi_constraint)
   
-
+            #print(log_likelihoods)
             max_l = np.append(max_l, max(log_likelihoods))
             solutions.append([pi,mu,sigma,log_likelihoods, max(log_likelihoods)])
 
@@ -543,14 +542,233 @@ class GaussianMixture(object):
             [mu]=mu
             [sigma]=sigma
             [log_likelihoods] = log_likelihoods
+
+        # standardize the mean
+        mu_std = np.zeros_like(mu)
+        for g in range(len(X)):
+            mu_std[g] = (mu[g]-np.mean(X[g],axis=0))/np.array(list(map(np.diagonal, np.sqrt(sigma[g]))))
         # calculate runtime
         t2 = datetime.now()
         run_time = t2-t1
 
         self.means_ = mu
+        self.means_std_ = mu_std
         self.covariances_ = sigma
         self.log_likelihoods = log_likelihoods
-        self.pi = pi
+        self.pi_ = pi
         self.constraints = [['Constraint on the Mean', mean_constraint], ['Constraint on the Variance', var_constraint],['Constraint on the Covariance',cov_constraint],['Constraint on Pi', pi_constraint]]
         self.run_time = run_time
+        self.X = X
+        self.rstarts = rstarts
+        self.max_iter = max_iter
+        self.tol = tol
            # opt_loglikelihoods = max(log_likelihoods)
+
+    def predict_proba(self,*x0):
+        """
+        Function to predict posterior probabilites for each observation to belong to a specific Gaussian/Latent Class
+
+        Parameters
+        --------------
+        x0: Dataset of observations to calculate posterior probabilities for
+
+        Returns
+        -------------
+        all_probs: A list of dimension G (i.e. number of groups/datasets) x N (i.e. number of observations) x K (i.e. number of Gaussians/Latent Classes)
+        with the probabilty for every datapoint to belong to a certain Gaussian/Class
+        """
+        # for each observation predict probability of belonging to a specific Gaussian/Latent Class
+        all_probs =[]
+        for g in range(len(x0)):
+            probs = np.array([ stats.multivariate_normal.pdf(x0[g], mean = self.means_[g][k], cov = self.covariances_[g][k]) for k in range(self.K) ])
+            all_probs.append(probs.T)
+        return all_probs
+
+    def predict(self,*x0):
+        """
+        Function to get assigned class/Gaussian for each observation
+
+        Parameters
+        --------------
+        x0: Dataset of observations to calculate class assignment for
+
+        Returns
+        -------------
+        all_probs: A list of dimension G (i.e. number of groups/datasets) x N (i.e. number of observations) with the number of the class/Gaussian an
+        observation was assigned to
+       
+        """    
+        all_probs =[]
+        for g in range(len(x0)):
+            probs = np.array([ stats.multivariate_normal.pdf(x0[g], mean = self.means_[g][k], cov = self.covariances_[g][k]) for k in range(self.K) ])
+            all_probs.append(np.argmax(probs,axis=0))
+        return all_probs
+
+    def bootstrap_raw(self,*X,nbs, rstarts=0, max_iter=0, tol=0, mean_constraint=0, var_constraint=0, cov_constraint=0, pi_constraint=0):
+        """
+        Function to boostrap standard errors
+        Based on O’Hagan, A., Murphy, T.B., Scrucca, L. et al. Investigation of parameter uncertainty in clustering using a Gaussian mixture model via jackknife, bootstrap and weighted likelihood bootstrap. Comput Stat 34, 1779–1813 (2019). https://doi.org/10.1007/s00180-019-00897-9
+        
+        i.e we draw samples of the  same size as the original data with replacement from the original data and then perform LPA with the optimal values obtained from the original LPA as starting values
+        we den calculate the sample standard deviation from the solutions
+
+        Parameters:
+        ------------------
+        X: data to sample from for the bootstrap
+
+        nbs: number of bootstrap samples to draw
+
+        ... the remaining are the same parameters as for the original EM algorithm, per default the values specified in the fit function are chosen
+
+        Returns:
+        ----------------
+        sd_solutions:  a vector with estimated standard deviations for pi, mu and sigma for each group/dataset
+        
+        
+        
+        """
+        G = len(X)
+        preds = []
+        for g in range(G):
+            preds.append(self.predict_proba(X[g])[0])
+        bs_pi =np.zeros((nbs,G,self.K))
+        bs_mu = np.zeros((nbs,G,self.K,X[0].shape[1]))
+        bs_cov = np.zeros((nbs,G,self.K, X[0].shape[1],X[0].shape[1]))
+        if(rstarts == 0):
+            rstarts =self.rstarts
+        if(max_iter == 0):
+            max_iter = self.max_iter
+        if(tol == 0):
+            tol = self.tol
+        if(mean_constraint == 0):
+            mean_constraint = self.constraints[0][1]
+        if(var_constraint==0):
+            var_constraint=self.constraints[1][1]
+        if(cov_constraint==0):
+            cov_constraint=self.constraints[2][1]
+        if(pi_constraint ==0):
+            pi_constraint=self.constraints[3][1]
+        
+        mu = self.means_
+        cov = self.covariances_
+        pi = self.pi_
+
+
+        for g in range(G):
+            for i in range(nbs):
+                bindex = np.random.choice(X[g].shape[0],X[g].shape[0],replace=True)
+                bsample = np.array(np.take(X[g],bindex,axis=0)).astype(float)
+                bpost = np.take(preds[g],bindex,axis=0)
+                #print(bpost.shape)
+                #print(len(preds))
+                bsrun = self.run_EM([bsample], rstarts=rstarts, max_iter=max_iter, tol =tol, mean_constraint=mean_constraint, var_constraint=var_constraint,cov_constraint=cov_constraint, pi_constraint=pi_constraint,init_pi=bpost)
+                
+                bmu = bsrun[0][1][0]
+                # calculate pairwise distance
+                #print(mu[0])
+                #print(bmu)
+                D = distance_matrix(mu[0],bmu)
+                org, reorder = linear_sum_assignment(D)
+                bmu = bmu[reorder]
+
+                #print(bsrun[0][0])
+                #print(reorder)
+                bs_pi[i,g,:] = bsrun[0][0][0][reorder]
+                bs_mu[i,g,:]=bmu
+                bs_cov[i,g,:]=bsrun[0][2][0][reorder]
+
+        pi_sd = np.sqrt(1/(bs_pi.shape[0]-1)*np.sum((bs_pi-np.mean(bs_pi,axis=0))**2,axis=0))
+        #mu_sd = np.sqrt(1/(bs_mu.shape[0]-1)*np.sum((bs_mu-np.mean(bs_mu,axis=0))**2,axis=0))
+        mu_sd = np.sqrt(1/(bs_mu.shape[0]-1)*np.sum(np.sqrt((bs_mu-np.mean(bs_mu,axis=0))**2),axis=0))
+        #mu_sd =((bs_mu.shape[0]-1)/bs_cov.shape[0]*np.sum(bs_mu-np.mean(bs_mu,axis=0),axis=0))**2
+        cov_sd = np.sqrt(1/(bs_cov.shape[0]-1)*np.sum((bs_cov-np.mean(bs_cov,axis=0))**2,axis=0))
+        #cov_sd =((bs_cov.shape[0]-1)/bs_cov.shape[0]*np.sum(bs_cov-np.mean(bs_cov,axis=0),axis=0))**2
+
+        sd_solutions = [pi_sd, mu_sd,cov_sd]
+        return sd_solutions
+
+    def bootstrap_fitted(self,*X,nbs, rstarts=0, max_iter=0, tol=0, mean_constraint=0, var_constraint=0, cov_constraint=0, pi_constraint=0):
+        """
+        Function to boostrap standard errors
+        Based on Basford K. E.; McLachlan G. J. (1997): Standard errors of fitted component means of normal mixtures. https://www.researchgate.net/publication/37625647_Standard_errors_of_fitted_component_means_of_normal_mixtures?enrichId=rgreq-00d4b1f6ca093f66ea93fd49d03d6f43-XXX&enrichSource=Y292ZXJQYWdlOzM3NjI1NjQ3O0FTOjEwNDU1Njc3MTkzODMxOEAxNDAxOTM5Njg1OTQ1&el=1_x_2&_esc=publicationCoverPdf
+        
+        i.e we draw samples of the  same size as the original data with replacement from the fitted distributions and then perform LPA with the optimal values obtained from the original LPA as starting values
+        we den calculate the sample standard deviation from the solutions
+        
+        Parameters:
+        ------------------
+        X: data to sample from for the bootstrap
+
+        nbs: number of bootstrap samples to draw
+
+        ... the remaining are the same parameters as for the original EM algorithm, per default the values specified in the fit function are chosen
+
+        Returns:
+        ----------------
+        sd_solutions:  a vector with estimated standard deviations for pi, mu and sigma for each group/dataset
+        
+        
+        
+        """
+        G = len(X)
+        preds = []
+        for g in range(G):
+            preds.append(self.predict_proba(X[g])[0])
+        D = X[0].shape[1]
+        bs_pi =np.zeros((nbs,G,self.K))
+        bs_mu = np.zeros((nbs,G,self.K,X[0].shape[1]))
+        bs_cov = np.zeros((nbs,G,self.K, X[0].shape[1],X[0].shape[1]))
+        if(rstarts == 0):
+            rstarts =self.rstarts
+        if(max_iter == 0):
+            max_iter = self.max_iter
+        if(tol == 0):
+            tol = self.tol
+        if(mean_constraint == 0):
+            mean_constraint = self.constraints[0][1]
+        if(var_constraint==0):
+            var_constraint=self.constraints[1][1]
+        if(cov_constraint==0):
+            cov_constraint=self.constraints[2][1]
+        if(pi_constraint ==0):
+            pi_constraint=self.constraints[3][1]
+        
+        mu = self.means_
+        cov = self.covariances_
+        pi = self.pi_
+
+        # calculate number of samples to draw from each distribution
+        num_samples = np.round(self.pi_ * X[0].shape[0])
+
+        for g in range(G):
+            for i in range(nbs):
+                bsample = np.empty((0,6))
+                for k in range(self.K):
+                #bindex = np.random.choice(X[g].shape[0],X[g].shape[0],replace=True)
+                    bsample_part = np.random.multivariate_normal(self.means_[g][k],self.covariances_[g][k], size=num_samples[0][k].astype(int))
+                    bsample = np.vstack([bsample, bsample_part])
+                bsrun = self.run_EM([bsample], rstarts=rstarts, max_iter=max_iter, tol =tol, mean_constraint=mean_constraint, var_constraint=var_constraint,cov_constraint=cov_constraint, pi_constraint=pi_constraint,init_pi=self.pi_)
+                
+                bmu = bsrun[0][1][0]
+                # calculate pairwise distance
+                #print(mu[0])
+                #print(bmu)
+                D = distance_matrix(mu[0],bmu)
+                org, reorder = linear_sum_assignment(D)
+                bmu = bmu[reorder]
+
+                #print(bsrun[0][0])
+                #print(reorder)
+                bs_pi[i,g,:] = bsrun[0][0][0][reorder]
+                bs_mu[i,g,:]=bmu
+                bs_cov[i,g,:]=bsrun[0][2][0][reorder]
+
+        pi_sd = np.sqrt(1/(bs_pi.shape[0]-1)*np.sum((bs_pi-np.mean(bs_pi,axis=0))**2,axis=0))
+        #mu_sd = np.sqrt(1/(bs_mu.shape[0]-1)*np.sum((bs_mu-np.mean(bs_mu,axis=0))**2,axis=0))
+        mu_sd = np.sqrt(1/(bs_mu.shape[0]-1)*np.sum(np.sqrt((bs_mu-np.mean(bs_mu,axis=0))**2),axis=0))
+        #mu_sd =((bs_mu.shape[0]-1)/bs_cov.shape[0]*np.sum(bs_mu-np.mean(bs_mu,axis=0),axis=0))**2
+        cov_sd = np.sqrt(1/(bs_cov.shape[0]-1)*np.sum((bs_cov-np.mean(bs_cov,axis=0))**2,axis=0))
+        #cov_sd =((bs_cov.shape[0]-1)/bs_cov.shape[0]*np.sum(bs_cov-np.mean(bs_cov,axis=0),axis=0))**2
+
+        sd_solutions = [pi_sd, mu_sd,cov_sd]
+        return sd_solutions
