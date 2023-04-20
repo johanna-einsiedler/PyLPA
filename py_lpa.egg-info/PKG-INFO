@@ -1,0 +1,8 @@
+Metadata-Version: 2.1
+Name: py-lpa
+Version: 0.1
+Summary: A package for running gaussian mixture models and latent profile analyses in Python
+Home-page: https://github.com/johanna-einsiedler/PyGMM
+Author: Johanna Einsiedler
+Author-email: johanna.einsiedler@sodas.ku.dk
+License: MIT

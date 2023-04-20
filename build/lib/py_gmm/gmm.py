@@ -438,7 +438,7 @@ class GaussianMixture(object):
 
                 # check for convergence
                 if (len(log_likelihoods)>2 and np.abs(l - log_likelihoods[-2]) < tol): break
-                      
+                #if (not np.any(W_s)): break     
                 # Maximization Step
                 mu = self.mstep_mu(X,W,W_s, constraint=mean_constraint)
                 sigma = self.mstep_sigma(X,W,W_s,mu,var_constraint=var_constraint, cov_constraint=cov_constraint)
@@ -455,7 +455,7 @@ class GaussianMixture(object):
         return(solutions)
 
 
-    def fit(self,*X, rstarts=1, max_iter=100, tol=0.001, first_stage_iter=None, n_final_stage=1, mean_constraint=None, var_constraint=None, cov_constraint=None,pi_constraint=None):
+    def fit(self,*X, rstarts=1, max_iter=100, tol=0.001, first_stage_iter=None, n_final_stage=1, init_mu=None, init_cov=None, init_pi=None, mean_constraint=None, var_constraint=None, cov_constraint=None,pi_constraint=None):
         """
         Function to fit the model.
 
@@ -477,7 +477,18 @@ class GaussianMixture(object):
         
         n_final_stage: int
             [Optional]: number of solutions to advance to the second stage
+               init_mu: array of floats
+            [Optional]: an array to use as starting values for the mean, has to have dimension (G,K,D) 
+            i.e. number of datasets/groups x number of latent classes/Gaussians x number of manifest variables
         
+        init_cov: array of floats
+            [Optional]: an array to use a starting values for the covariance, has to have dimension (G, K, D, D)
+            i.e. number of datasets/groups x number of latent classes/Gaussians x number of manifest variables x number of manifest variables
+
+        init_pi: array of floats
+            [Optional]: an array to use as starting proportions for the latent lasses/Gaussians, has to have dimension (G,K)
+            i.e. number of datasets/groups x number of latent classes/Gaussians
+
         mean_constraint: None, 'groups'
             [Optional]: A constraint to impose on the means of the Gaussians.
                 - None: Means are allowed to vary freely across all dimensions.
@@ -519,7 +530,7 @@ class GaussianMixture(object):
                 raise Exception('When a number of frist stage iterations is specified, the number of desired final stage solutions needs to be bigger than 1.')
 
             # run first stage
-            initial_solutions = self.run_EM(X,rstarts=rstarts, max_iter=first_stage_iter, tol=tol, n_solutions =n_final_stage, mean_constraint=mean_constraint,var_constraint=var_constraint, cov_constraint=cov_constraint,pi_constraint=pi_constraint)
+            initial_solutions = self.run_EM(X,rstarts=rstarts, max_iter=first_stage_iter, init_mu=init_mu, init_cov=init_cov, init_pi=init_pi, tol=tol, n_solutions =n_final_stage, mean_constraint=mean_constraint,var_constraint=var_constraint, cov_constraint=cov_constraint,pi_constraint=pi_constraint)
             fpi, fmu, fsigma, flog_likelihoods, fmax_loglikelihood= [[i for i in element if i is not None] for element in  list(itertools.zip_longest(*initial_solutions))]
 
             
@@ -661,8 +672,11 @@ class GaussianMixture(object):
                 bpost = np.take(preds[g],bindex,axis=0)
                 #print(bpost.shape)
                 #print(len(preds))
-                bsrun = self.run_EM([bsample], rstarts=rstarts, max_iter=max_iter, tol =tol, mean_constraint=mean_constraint, var_constraint=var_constraint,cov_constraint=cov_constraint, pi_constraint=pi_constraint,init_pi=bpost)
-                
+                try:
+                    bsrun = self.run_EM([bsample], rstarts=rstarts, max_iter=max_iter, tol =tol, mean_constraint=mean_constraint, var_constraint=var_constraint,cov_constraint=cov_constraint, pi_constraint=pi_constraint,init_pi=bpost)
+                except:
+                    i=i-1
+                    pass
                 bmu = bsrun[0][1][0]
                 # calculate pairwise distance
                 #print(mu[0])
@@ -742,7 +756,7 @@ class GaussianMixture(object):
 
         for g in range(G):
             for i in range(nbs):
-                bsample = np.empty((0,6))
+                bsample = np.empty((0,int(D)))
                 for k in range(self.K):
                 #bindex = np.random.choice(X[g].shape[0],X[g].shape[0],replace=True)
                     bsample_part = np.random.multivariate_normal(self.means_[g][k],self.covariances_[g][k], size=num_samples[0][k].astype(int))
@@ -753,8 +767,8 @@ class GaussianMixture(object):
                 # calculate pairwise distance
                 #print(mu[0])
                 #print(bmu)
-                D = distance_matrix(mu[0],bmu)
-                org, reorder = linear_sum_assignment(D)
+                Dist = distance_matrix(mu[0],bmu)
+                org, reorder = linear_sum_assignment(Dist)
                 bmu = bmu[reorder]
 
                 #print(bsrun[0][0])
@@ -772,3 +786,86 @@ class GaussianMixture(object):
 
         sd_solutions = [pi_sd, mu_sd,cov_sd]
         return sd_solutions
+
+    def BIC(self):
+        """
+        Function to calculate the Bayesian Information Criterion for the maximum likelihood solution
+        Parameters:
+        ------------------
+        self:
+        A fitted Gaussian Mixture Model
+
+        ----------------
+        BIC: the Bayesian Information Criterion
+
+        """
+        max_loglik = [item for sublist in self.log_likelihoods for item in sublist][-1]
+        N = self.X[0].shape[0]
+        dfmeans = len(np.unique(self.means_))
+        dfvars = len(np.unique(self.covariances_[self.covariances_!=0]))
+        dfclasses = self.pi_.shape[1]-1
+        df = dfmeans + dfvars+ dfclasses
+        return -2*max_loglik + np.log(N)*df
+
+    def AIC(self):
+        """
+        Function to calculate the Akaike Information Criterion for the maximum likelihood solution
+        Parameters:
+        ------------------
+        self:
+        A fitted Gaussian Mixture Model
+
+        ----------------
+        AIC: the Akaike Information Criterion
+
+        """
+        max_loglik = [item for sublist in self.log_likelihoods for item in sublist][-1]
+        N = self.X[0].shape[0]
+        dfmeans = len(np.unique(self.means_))
+        dfvars = len(np.unique(self.covariances_[self.covariances_!=0]))
+        dfclasses = self.pi_.shape[1]-1
+        df = dfmeans + dfvars+ dfclasses
+        return 2*df-2*max_loglik
+
+    def CAIC(self):
+        """
+        Function to calculate the Consistent Akaike Information Criterion for the maximum likelihood solution
+        Parameters: ozdogman, H. Model selection and Akaike’s information criterion (AIC): the
+        general theory and its analytical extensions. Psychometrika 52, 345–370 (1987). 61. Schwartz, G. Estimating the dimension of a model. Ann. Stat. 6.
+        ------------------
+        self:
+        A fitted Gaussian Mixture Model
+
+        ----------------
+        CAIC: the Consistent Akaike Information Criterion
+
+        """
+        max_loglik = [item for sublist in self.log_likelihoods for item in sublist][-1]
+        N = self.X[0].shape[0]
+        dfmeans = len(np.unique(self.means_))
+        dfvars = len(np.unique(self.covariances_[self.covariances_!=0]))
+        dfclasses = self.pi_.shape[1]-1
+        df = dfmeans + dfvars+ dfclasses
+        return -2*max_loglik + df*(np.log(N)+1)
+
+
+    def SABIC(self):
+        """
+        Function to calculate the Sample Size Adjusted BIC for the maximum likelihood solution
+        Sclove, S. L. Application of model-selection criteria to some problems with
+        multivariate analysis. Psychometrika 52, 333–343 (1987).
+        ------------------
+        self:
+        A fitted Gaussian Mixture Model
+
+        ----------------
+        SABIC: the sample size adjusted BIC
+
+        """
+        max_loglik = [item for sublist in self.log_likelihoods for item in sublist][-1]
+        N = self.X[0].shape[0]
+        dfmeans = len(np.unique(self.means_))
+        dfvars = len(np.unique(self.covariances_[self.covariances_!=0]))
+        dfclasses = self.pi_.shape[1]-1
+        df = dfmeans + dfvars+ dfclasses
+        return -2*max_loglik + df*(np.log((N+2)/24))

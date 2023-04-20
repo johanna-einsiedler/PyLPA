@@ -1,0 +1,10 @@
+README.md
+setup.py
+py_lpa/__init__.py
+py_lpa/gmm.py
+py_lpa.egg-info/PKG-INFO
+py_lpa.egg-info/SOURCES.txt
+py_lpa.egg-info/dependency_links.txt
+py_lpa.egg-info/not-zip-safe
+py_lpa.egg-info/requires.txt
+py_lpa.egg-info/top_level.txt
