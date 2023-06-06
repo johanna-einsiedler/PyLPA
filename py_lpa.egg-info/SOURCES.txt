@@ -1,4 +1,6 @@
+LICENSE.txt
 README.md
+setup.cfg
 setup.py
 py_lpa/__init__.py
 py_lpa/gmm.py

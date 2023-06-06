@@ -1,5 +1,5 @@
 Metadata-Version: 2.1
-Name: py-lpa
+Name: py-latent-profiles
 Version: 0.3
 Summary: A package for running gaussian mixture models and latent profile analyses in Python
 Home-page: https://github.com/johanna-einsiedler/PyGMM

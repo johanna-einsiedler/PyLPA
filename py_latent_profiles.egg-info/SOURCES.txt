@@ -1,0 +1,12 @@
+LICENSE.txt
+README.md
+setup.cfg
+setup.py
+py_latent_profiles.egg-info/PKG-INFO
+py_latent_profiles.egg-info/SOURCES.txt
+py_latent_profiles.egg-info/dependency_links.txt
+py_latent_profiles.egg-info/not-zip-safe
+py_latent_profiles.egg-info/requires.txt
+py_latent_profiles.egg-info/top_level.txt
+py_lpa/__init__.py
+py_lpa/gmm.py

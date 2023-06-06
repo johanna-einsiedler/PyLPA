@@ -672,10 +672,9 @@ class GaussianMixture(object):
                 bindex = np.random.choice(X[g].shape[0],X[g].shape[0],replace=True)
                 bsample = np.array(np.take(X[g],bindex,axis=0)).astype(float)
                 bpost = np.take(preds[g],bindex,axis=0)
-                #print(bpost.shape)
-                #print(len(preds))
+        
                 try:
-                    bsrun = self.run_EM([bsample], rstarts=rstarts, max_iter=max_iter, tol =tol, mean_constraint=mean_constraint, var_constraint=var_constraint,cov_constraint=cov_constraint, pi_constraint=pi_constraint,init_pi=bpost)
+                    bsrun = self.run_EM([bsample],  max_iter=max_iter, tol =tol, mean_constraint=mean_constraint, var_constraint=var_constraint,cov_constraint=cov_constraint, pi_constraint=pi_constraint,init_pi=bpost)
                 except:
                     i=i-1
                     pass

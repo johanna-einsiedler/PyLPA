@@ -1,0 +1,12 @@
+LICENSE.txt
+README.md
+setup.cfg
+setup.py
+py_lpa/__init__.py
+py_lpa/gmm.py
+pylpa.egg-info/PKG-INFO
+pylpa.egg-info/SOURCES.txt
+pylpa.egg-info/dependency_links.txt
+pylpa.egg-info/not-zip-safe
+pylpa.egg-info/requires.txt
+pylpa.egg-info/top_level.txt
