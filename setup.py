@@ -3,7 +3,7 @@ from pathlib import Path
 this_directory = Path(__file__).parent
 long_description = (this_directory / "README.md").read_text()
 setup(name='py-latent-profiles',
-      version='0.3',
+      version='0.4',
       description='A package for running gaussian mixture models and latent profile analyses in Python',
       url='https://github.com/johanna-einsiedler/PyGMM',
       author='Johanna Einsiedler',

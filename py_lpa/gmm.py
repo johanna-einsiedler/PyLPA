@@ -5,7 +5,8 @@ from datetime import datetime
 import itertools
 from scipy.spatial import distance_matrix
 from scipy.optimize import linear_sum_assignment
-
+import sys
+import warnings
 
 """
 Disclaimer: This code is based on the code for multivariate Gaussian Mixture Models provided here by 
@@ -85,7 +86,7 @@ class GaussianMixture(object):
 
         sigma
             an array of starting covariances for each class and dataset
-            per default these are diagonal matrices with 1 on the diagonal
+            per default these are diagonal matrices with the variance of the respective variable on the diagonal
 
         ng
             an array containing the number of observations in each dataset
@@ -94,21 +95,19 @@ class GaussianMixture(object):
             a list of length G with all zero arrays of dimension ng x K
             this is weighting matrix that is used for facilitating the updating of parameters
         """
+
         # if there are not multiple datasets, unlist the data
         if len(X)==1:
             X=X[0]
-        
         sigma = np.array([[np.eye(D)]*K]*G)
         pi = np.zeros((G,K))
         W = list()
         ng = [x.shape[0] for x in X]
         mu=np.zeros((G,K,D))
 
-
         for g in range(G):
             W.append(np.zeros((ng[g],K)))
             pi[g,:] = np.array([1 / K] * K)
-
         # if means are not constrained (or there is only one dataset) chhose starting value
         # at random from each dataset
         if mean_constraint == None:
@@ -139,7 +138,7 @@ class GaussianMixture(object):
             i.e. number of datasets/groups x number of latent classes/Gaussians x number of manifest variables
         
         sigma: array of floats
-            aan array that contains the current covariance values, has to have dimension (G, K, D, D)
+            an array that contains the current covariance values, has to have dimension (G, K, D, D)
             i.e. number of datasets/groups x number of latent classes/Gaussians x number of manifest variables x number of manifest variables
 
         pi: array of floats
@@ -164,11 +163,14 @@ class GaussianMixture(object):
 
         K= self.K
         # probability density function of a multivariate normal distribution
+   
         P = lambda m ,s: stats.multivariate_normal.pdf(x=X, mean = m, cov = s, allow_singular=True)
-
         # calculate the likelihood of each datapoint taken the current mean, cov and proporitons for given
         W = np.zeros((X.shape[0],K))
         for k in range(K):
+            #print(np.sum(np.isnan(mu[k])))
+            #print(np.sum(np.isnan(sigma[k])))
+
             W[:, k] = pi[k] * P(mu[k], sigma[k])
         l = np.sum(np.log(np.sum(W, axis = 1)))
         W = (W.T / W.sum(axis = 1)).T
@@ -205,6 +207,12 @@ class GaussianMixture(object):
         # no constraint
         if constraint == None:
             mu=np.zeros((G, K,D))
+            #print(W_s)
+            for ws in range(len(W_s)):
+                if any(w==0 for w in W_s[ws]):
+                    #print('success')
+                    W_s[ws][W_s[ws]==0] = 0.001
+                    #print(W_s)
             update_mu = lambda W_s,W,X: (1. / W_s) * np.sum(W.T * X.T, axis = 1).T 
             for g in range(G):
                 mu[g] = list(map(update_mu, W_s[g],W[g].T, itertools.repeat(X[g])))
@@ -224,8 +232,7 @@ class GaussianMixture(object):
 
         else: 
             raise Exception('No implementation for this combination of constraints')
-
-        
+        #print(mu)
         return(mu)
 
     def mstep_sigma(self, X,W,W_s, mu,var_constraint='classes', cov_constraint='zero'):
@@ -353,7 +360,7 @@ class GaussianMixture(object):
 
         return pi
 
-    def run_EM(self, X,  rstarts=100, max_iter=100, tol=0.001,  n_solutions=1, init_mu=None, init_cov=None, init_pi=None, mean_constraint=None, var_constraint='groups', cov_constraint='zero', pi_constraint=None):
+    def run_EM(self, X,  rstarts=100, max_iter=100, tol=0.001,  n_solutions=1, init_mu=None, init_cov=None, init_pi=None, mean_constraint=None, var_constraint='groups', cov_constraint='zero', pi_constraint=None, stage=None):
         """
         Function to run the actual Expectation Maximization Algorithm.
 
@@ -404,6 +411,7 @@ class GaussianMixture(object):
         except:
             raise Exception('The samples need to have the same number of manifest variables.')
         
+        warnings.filterwarnings("ignore")
         # number of datasets/groups
         G = len(X)
         # number of manifest variables
@@ -414,7 +422,13 @@ class GaussianMixture(object):
         max_l = np.empty(0)
         solutions = []
 
-        for s in tqdm(range(rstarts)):
+        # disable progress bar for second stage optimization
+        if stage =='second':
+            disable = True
+        else:
+            disable = False
+
+        for s in tqdm(range(rstarts),disable=disable):
             # initalisation
             pi,mu,sigma,W, ng = self.initialization([x for x in X], D=D, K=K, G=G)
 
@@ -445,15 +459,13 @@ class GaussianMixture(object):
                 sigma = self.mstep_sigma(X,W,W_s,mu,var_constraint=var_constraint, cov_constraint=cov_constraint)
                 pi = self.mstep_pi(X,W,W_s, pi_constraint=pi_constraint)
   
-            #print(log_likelihoods)
             max_l = np.append(max_l, max(log_likelihoods))
             solutions.append([pi,mu,sigma,log_likelihoods, max(log_likelihoods)])
 
         # find the best solution(s)
         best_solutions = np.argpartition(max_l,-n_solutions)[-n_solutions:]
-       
-        solutions = [solutions[i] for i in best_solutions]
-        return(solutions)
+
+        return([solutions[i] for i in best_solutions])
 
 
     def fit(self,*X, rstarts=1, max_iter=100, tol=0.001, first_stage_iter=None, n_final_stage=1, init_mu=None, init_cov=None, init_pi=None, mean_constraint=None, var_constraint=None, cov_constraint=None,pi_constraint=None):
@@ -513,11 +525,11 @@ class GaussianMixture(object):
         
         Returns
         -----------
-
-
-        
-        
         """
+
+
+
+
         # initialize time measurement
         t1 = datetime.now()
 
@@ -536,7 +548,8 @@ class GaussianMixture(object):
 
             
             # run second stage
-            final_solutions = list(map(self.run_EM, itertools.repeat(X),itertools.repeat(1),itertools.repeat(max_iter-first_stage_iter),itertools.repeat(tol), itertools.repeat(1),fmu,fsigma,fpi,itertools.repeat(mean_constraint),itertools.repeat(var_constraint), itertools.repeat(cov_constraint), itertools.repeat(pi_constraint)))
+            print('Running Second Stage Optimization')
+            final_solutions = list(map(self.run_EM, itertools.repeat(X),itertools.repeat(1),itertools.repeat(max_iter-first_stage_iter),itertools.repeat(tol), itertools.repeat(1),fmu,fsigma,fpi,itertools.repeat(mean_constraint),itertools.repeat(var_constraint), itertools.repeat(cov_constraint), itertools.repeat(pi_constraint),itertools.repeat('second')))
             final_solutions = [[i for i in element if i is not None] for element in  list(itertools.zip_longest(*final_solutions))]
             [fsolutions] = final_solutions
             pi, mu, sigma, log_likelihoods, max_loglikelihood = [[i for i in element if i is not None] for element in  list(itertools.zip_longest(*fsolutions))]
@@ -548,6 +561,7 @@ class GaussianMixture(object):
             sigma = sigma[s]
             log_likelihoods = [flog_likelihoods[s][:-1],log_likelihoods[s]]
         else:
+            
             solutions = self.run_EM(X,rstarts=rstarts, max_iter=max_iter, tol=tol, mean_constraint=mean_constraint,var_constraint=var_constraint, cov_constraint=cov_constraint,pi_constraint=pi_constraint)
             pi, mu, sigma, log_likelihoods, max_loglikelihood = [[i for i in element if i is not None] for element in  list(itertools.zip_longest(*solutions))]
             [pi]=pi
@@ -574,7 +588,6 @@ class GaussianMixture(object):
         self.rstarts = rstarts
         self.max_iter = max_iter
         self.tol = tol
-           # opt_loglikelihoods = max(log_likelihoods)
 
     def predict_proba(self,*x0):
         """
@@ -667,14 +680,14 @@ class GaussianMixture(object):
 
 
         for g in range(G):
-            for i in range(nbs):
+            for i in tqdm(range(nbs)):
                 # draw a random sample from X with replacement
                 bindex = np.random.choice(X[g].shape[0],X[g].shape[0],replace=True)
                 bsample = np.array(np.take(X[g],bindex,axis=0)).astype(float)
                 bpost = np.take(preds[g],bindex,axis=0)
         
                 try:
-                    bsrun = self.run_EM([bsample],  max_iter=max_iter, tol =tol, mean_constraint=mean_constraint, var_constraint=var_constraint,cov_constraint=cov_constraint, pi_constraint=pi_constraint,init_pi=bpost)
+                    bsrun = self.run_EM([bsample],  max_iter=max_iter, tol =tol, mean_constraint=mean_constraint, var_constraint=var_constraint,cov_constraint=cov_constraint, pi_constraint=pi_constraint,init_pi=bpost,stage='second')
                 except:
                     i=i-1
                     pass
@@ -756,13 +769,13 @@ class GaussianMixture(object):
         num_samples = np.round(self.pi_ * X[0].shape[0])
 
         for g in range(G):
-            for i in range(nbs):
+            for i in tqdm(range(nbs)):
                 bsample = np.empty((0,int(D)))
                 for k in range(self.K):
                 #bindex = np.random.choice(X[g].shape[0],X[g].shape[0],replace=True)
                     bsample_part = np.random.multivariate_normal(self.means_[g][k],self.covariances_[g][k], size=num_samples[0][k].astype(int))
                     bsample = np.vstack([bsample, bsample_part])
-                bsrun = self.run_EM([bsample], rstarts=rstarts, max_iter=max_iter, tol =tol, mean_constraint=mean_constraint, var_constraint=var_constraint,cov_constraint=cov_constraint, pi_constraint=pi_constraint,init_pi=self.pi_)
+                bsrun = self.run_EM([bsample], rstarts=rstarts, max_iter=max_iter, tol =tol, mean_constraint=mean_constraint, var_constraint=var_constraint,cov_constraint=cov_constraint, pi_constraint=pi_constraint,init_pi=self.pi_,stage='second')
                 
                 bmu = bsrun[0][1][0]
                 # calculate pairwise distance
