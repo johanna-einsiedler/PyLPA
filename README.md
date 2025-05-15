@@ -3,6 +3,8 @@
 This is a Python package that can be used to run Gaussian mixture models with different constraints on means, variances and covariances. 
 It can thus be used to run latent profile analysis, including multiple group analysis.
 
+Some examples can be found in the [Vignette](https://github.com/johanna-einsiedler/PyLPA/blob/main/pyLPA_Vignette.pdf)
+
 --------------------------------------------------------------------------------------
 Copyright (C) 2023  Johanna Einsiedler
 
